@@ -22,7 +22,7 @@ import {
 } from "./evals/evals";
 import { sendMailRoute } from "./gmail_action/routes/sendMail";
 import { sendEmailWorkflow } from "./gmail_action/workflow/sendEmailWorkflow.js";
-import { emailAgent } from "./agents/agent.js";
+// import { emailAgent } from "./agents/agent.js";
 // import { sendGmail } from "./gmail_action/index.js";
 
 process.on('SIGTERM', async () => {
@@ -215,7 +215,7 @@ const logger = createPinoLogger({
 
 new VoltAgent({
   agents: {
-    assistant: mainSupportAgent,emailAgent
+    assistant: mainSupportAgent
   },
   workflows: {
     sendEmailWorkflow,
