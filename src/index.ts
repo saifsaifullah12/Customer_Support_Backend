@@ -21,7 +21,6 @@ import {
   deleteEvalLogRoute
 } from "./evals/evals";
 import { sendMailRoute } from "./gmail_action/routes/sendMail";
-import { sendEmailWorkflow } from "./gmail_action/workflow/sendEmailWorkflow.js";
 // import { emailAgent } from "./agents/agent.js";
 // import { sendGmail } from "./gmail_action/index.js";
 
@@ -217,9 +216,7 @@ new VoltAgent({
   agents: {
     assistant: mainSupportAgent
   },
-  workflows: {
-    sendEmailWorkflow,
-  },
+ 
   server: honoServer({ port: 4310 }),
   logger,
 });
