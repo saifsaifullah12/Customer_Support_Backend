@@ -8,10 +8,8 @@ import { billingKbTool } from "../tools/billingTool";
 import { billingInvoiceTool } from "../tools/billingInvoiceTool";
 import { billingRefundTool } from "../tools/billingRefundTool";
 import { memory } from "../memory/index.js";
-import { voiceProvider } from "../voice/index";
 import { inputGuardrail, outputGuardrail } from "../guardrails/security.js";
 import { liveEvalConfig } from "../evals/liveEvalConfig";
-import { emailAgent } from "./agent";
 import { sendGmail } from "../gmail_action";
 
 
@@ -82,7 +80,6 @@ export const mainSupportAgent = new Agent({
 
   inputGuardrails: [inputGuardrail],
   outputGuardrails: [outputGuardrail],
-  voice: voiceProvider,
 
   instructions: `
 You are the MAIN Support Agent.
