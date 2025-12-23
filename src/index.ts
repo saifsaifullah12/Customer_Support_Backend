@@ -7,8 +7,8 @@ import { mainSupportAgent } from "./agents/index.js";
 import { chatRoute } from "./routes/chat.js";
 import { uploadRoute } from "./routes/upload.js";
 import honoServer from "@voltagent/server-hono";
-import { sttRoute } from "./voice/stt.js";
-import { voiceProvider } from "./voice/index.js";
+// import { sttRoute } from "./voice/stt.js";
+// import { voiceProvider } from "./voice/index.js";
 import { memory } from "./memory/index.js";
 import {
   getBannedWordsRoute,
@@ -50,21 +50,21 @@ app.use("/*", cors({
 
 app.post("/chat", chatRoute);
 app.post("/upload", uploadRoute);
-app.post("/stt", sttRoute);
+// app.post("/stt", sttRoute);
 
-app.post("/tts", async (c) => {
-  const { text } = await c.req.json();
+// app.post("/tts", async (c) => {
+//   const { text } = await c.req.json();
 
-  if (!text) {
-    return c.json({ ok: false, error: "Text is required" }, 400);
-  }
+//   if (!text) {
+//     return c.json({ ok: false, error: "Text is required" }, 400);
+//   }
 
-  const audio: any = await voiceProvider.speak(text);
+//   const audio: any = await voiceProvider.speak(text);
 
-  return new Response(audio, {
-    headers: { "Content-Type": "audio/mpeg" },
-  });
-});
+//   return new Response(audio, {
+//     headers: { "Content-Type": "audio/mpeg" },
+//   });
+// });
 
 app.get("/health", (c) => {
   return c.json({ status: "ok", message: "Server is running" });
