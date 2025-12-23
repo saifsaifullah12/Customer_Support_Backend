@@ -40,7 +40,7 @@ process.on('SIGINT', async () => {
 const app = new Hono();
 
 app.use("/*", cors({
-  origin: ["http://localhost:3000", "http://localhost:3001"],
+  origin: ["http://localhost:3000", "http://localhost:3001","https://customersupportfrontend.vercel.app"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization"],
   exposeHeaders: ["Content-Length"],
