@@ -74,6 +74,7 @@ Do NOT answer billing questions.
 });
 
 
+
 export const mainSupportAgent = new Agent({
   id: "mainsupport",
   name: "Main Support Agent",
@@ -89,16 +90,20 @@ You are the MAIN Support Agent.
 3. Route to appropriate sub-agent
 4. Ask clarification if unclear
 
-If input is JSON with keys: to, subject, body
-You MUST call send_gmail.
-You MUST NOT respond with text.
+importent work:
+when the input like this example:
 
-example :
+to: example@gmail.com,
+subject: example,
+body: example
+
+to call the sendGmail-tools for sent mail the tool was only accept json 
+formate but user was send text so you give the input to the sendGmail-tool like json formate like this example:
 {
-"to":"example@gmail.com,
-"subject":"Manual Send Test",
-"body": "hi"
-} 
+"to": "example@gmail.com",
+"subject": "example",
+"body": "example"
+}
 `,
 
   model: openrouter("nvidia/nemotron-nano-12b-v2-vl:free"),

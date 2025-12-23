@@ -6,10 +6,10 @@ import { mainSupportAgent } from "../agents/index";
 function redactPII(text = "") {
   if (!text) return "";
   let s = text.replace(/\b\d{6,14}\b/g, "[number-**********]");
-  s = s.replace(
-    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
-    "[email-********@gmail.com]"
-  );
+  // s = s.replace(
+  //   /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+  //   "[email-********@gmail.com]"
+  // );
   return s;
 }
 
