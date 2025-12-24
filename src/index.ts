@@ -7,8 +7,6 @@ import { mainSupportAgent } from "./agents/index.js";
 import { chatRoute } from "./routes/chat.js";
 import { uploadRoute } from "./routes/upload.js";
 import honoServer from "@voltagent/server-hono";
-// import { sttRoute } from "./voice/stt.js";
-// import { voiceProvider } from "./voice/index.js";
 import { memory } from "./memory/index.js";
 import {
   getBannedWordsRoute,
@@ -21,8 +19,11 @@ import {
   deleteEvalLogRoute
 } from "./evals/evals";
 import { sendMailRoute } from "./gmail_action/routes/sendMail";
-// import { emailAgent } from "./agents/agent.js";
-// import { sendGmail } from "./gmail_action/index.js";
+import { getConversationHistoryRoute, getAllConversationsRoute, deleteConversationRoute } from "./evals/routes/history";
+import { executeToolRoute, getToolsRoute, getToolHistoryRoute } from "./tools/routes/executeTool";
+
+// Initialize database tables
+// initDatabase().catch(console.error);
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing database pool...');
@@ -47,67 +48,52 @@ app.use("/*", cors({
   credentials: true,
 }));
 
+// Chat routes
 app.post("/chat", chatRoute);
 app.post("/upload", uploadRoute);
-// app.post("/stt", sttRoute);
 
-// app.post("/tts", async (c) => {
-//   const { text } = await c.req.json();
-
-//   if (!text) {
-//     return c.json({ ok: false, error: "Text is required" }, 400);
-//   }
-
-//   const audio: any = await voiceProvider.speak(text);
-
-//   return new Response(audio, {
-//     headers: { "Content-Type": "audio/mpeg" },
-//   });
-// });
-
+// Health check
 app.get("/health", (c) => {
-  return c.json({ status: "ok", message: "Server is running" });
+  return c.json({ 
+    status: "ok", 
+    message: "Server is running",
+    timestamp: new Date().toISOString(),
+    services: {
+      database: "connected",
+      agents: "ready",
+      memory: "active"
+    }
+  });
 });
 
-app.get("/history/:conversationId", async (c) => {
+// Memory-based history (from VoltAgent memory)
+app.get("/memory/history/:conversationId", async (c) => {
   const conversationId = c.req.param("conversationId");
   const history = await memory.storage.getConversation(conversationId);
   return c.json({ ok: true, history });
 });
+
+// Database-based history routes
+app.get("/history/:conversationId", getConversationHistoryRoute);
+app.get("/history", getAllConversationsRoute);
+app.delete("/history/:conversationId", deleteConversationRoute);
+
+// Tools routes
+app.post("/tools/execute", executeToolRoute);
+app.get("/tools", getToolsRoute);
+app.get("/tools/history", getToolHistoryRoute);
 
 // Guardrail routes
 app.get("/guardrails/banned-words", getBannedWordsRoute);
 app.post("/guardrails/banned-words", addBannedWordRoute);
 app.delete("/guardrails/banned-words/:id", deleteBannedWordRoute);
 
+// Evaluation routes
 app.get("/evals/logs", getEvalLogsRoute);
 app.delete("/evals/logs/:id", deleteEvalLogRoute);
 
+// Email routes
 app.post("/send-email", sendMailRoute);
-
-// Test email endpoint
-// app.get("/test-gmail", async (c) => {
-//   try {
-//     const res = await sendGmail.execute!({
-//       to: "saifsaifullah1283@gmail.com",
-//       subject: "VoltOps Test",
-//       body: "Hello from VoltOps Gmail",
-//     });
-
-//     return c.json({ ok: true, result: res });
-//   } catch (error: any) {
-//     console.error("Test email failed:", error);
-//     return c.json({
-//       ok: false,
-//       error: error.message,
-//       stack: process.env.NODE_ENV === 'development'
-//         ? error.stack
-//         : undefined
-//     }, 500);
-//   }
-// });
-
-// New: Email configuration endpoint
 app.get("/email/config", (c) => {
   return c.json({
     ok: true,
@@ -121,7 +107,6 @@ app.get("/email/config", (c) => {
   });
 });
 
-// New: Email templates endpoint
 app.get("/email/templates", (c) => {
   const templates = {
     summary: {
@@ -135,18 +120,6 @@ app.get("/email/templates", (c) => {
       subject: "Follow-up: {issue}",
       body: "Dear {name},\n\nThis is a follow-up regarding: {issue}\n\nAdditional Details:\n{details}\n\nPlease let us know your thoughts or if you need any clarification.\n\nRegards,\nSupport Team",
       placeholders: ["name", "issue", "details"]
-    },
-    report: {
-      name: "Weekly Report",
-      subject: "Weekly Progress Report - Week {weekNumber}",
-      body: "Hello Team,\n\nHere's the weekly progress report for week {weekNumber}:\n\nAccomplishments:\n{accomplishments}\n\nChallenges:\n{challenges}\n\nGoals for Next Week:\n{goals}\n\nBest regards,\nSupport Team",
-      placeholders: ["weekNumber", "accomplishments", "challenges", "goals"]
-    },
-    alert: {
-      name: "System Alert",
-      subject: "URGENT: {system} Alert - {severity}",
-      body: "ALERT NOTIFICATION\n\nSystem: {system}\nSeverity: {severity}\nTime: {time}\n\nDescription:\n{description}\n\nImpact:\n{impact}\n\nAction Required:\n{action}\n\nPlease take immediate action.\n\nRegards,\nSystem Admin",
-      placeholders: ["system", "severity", "time", "description", "impact", "action"]
     }
   };
 
@@ -157,48 +130,7 @@ app.get("/email/templates", (c) => {
   });
 });
 
-// New: Bulk email endpoint (for future)
-app.post("/email/bulk", async (c) => {
-  try {
-    const { emails, subject, body } = await c.req.json();
-
-    if (!Array.isArray(emails) || emails.length === 0) {
-      return c.json({ ok: false, error: "Emails array is required and cannot be empty" }, 400);
-    }
-
-    if (!subject || !body) {
-      return c.json({ ok: false, error: "Subject and body are required" }, 400);
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const invalidEmails = emails.filter(email => !emailRegex.test(email));
-
-    if (invalidEmails.length > 0) {
-      return c.json({ ok: false, error: "Invalid email addresses", invalidEmails }, 400);
-    }
-
-    // const result = await sendGmail.execute!({
-    //   to: emails[0],
-    //   subject,
-    //   body
-    // });
-
-    return c.json({
-      ok: true,
-      message: `Email sent to ${emails[0]} (${emails.length} total recipients)`,
-      // result,
-      totalRecipients: emails.length
-    });
-
-  } catch (error: any) {
-    console.error("Bulk email error:", error);
-    return c.json({
-      ok: false,
-      error: error.message || "Failed to send bulk email"
-    }, 500);
-  }
-});
-
+// Serve the application
 serve({
   port: 4000,
   fetch: app.fetch,
@@ -206,6 +138,18 @@ serve({
 
 console.log("🚀 Hono API running at http://localhost:4000");
 console.log("📡 CORS enabled for http://localhost:3000");
+console.log("\n📊 Available Endpoints:");
+console.log("  POST /chat             - Chat with support agent");
+console.log("  POST /upload           - Upload images");
+console.log("  GET  /health           - Health check");
+console.log("  GET  /history          - Get all conversations");
+console.log("  GET  /history/:id      - Get conversation details");
+console.log("  POST /tools/execute    - Execute a tool");
+console.log("  GET  /tools            - Get available tools");
+console.log("  GET  /tools/history    - Get tool execution history");
+console.log("  GET  /guardrails/*     - Guardrail management");
+console.log("  GET  /evals/logs       - Evaluation logs");
+console.log("  POST /send-email       - Send emails");
 
 const logger = createPinoLogger({
   name: "my-agent-server",
@@ -216,14 +160,9 @@ new VoltAgent({
   agents: {
     assistant: mainSupportAgent
   },
- 
   server: honoServer({ port: 4310 }),
   logger,
 });
 
-console.log("VoltAgent running at http://localhost:4310");
-console.log("📧 Email endpoints available:");
-console.log(" POST /send-email");
-console.log(" GET /email/config");
-console.log(" GET /email/templates");
-console.log(" GET /test-gmail");
+console.log("\n⚡ VoltAgent running at http://localhost:4310");
+console.log("✅ System initialized successfully!");

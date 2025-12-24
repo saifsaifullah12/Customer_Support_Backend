@@ -12,7 +12,7 @@ const KB_DATA = [
     keywords: ["payment", "checkout", "card"],
     answer: "Please verify card details or contact your bank.",
   },
-  {
+  { 
     title: "App Crash",
     keywords: ["crash", "error", "freeze"],
     answer: "Update the app to the latest version and restart.",
