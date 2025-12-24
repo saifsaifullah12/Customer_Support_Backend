@@ -19,7 +19,7 @@ import {
   deleteEvalLogRoute
 } from "./evals/evals";
 import { sendMailRoute } from "./gmail_action/routes/sendMail";
-import { getConversationHistoryRoute, getAllConversationsRoute, deleteConversationRoute } from "./evals/routes/history";
+import { getConversationHistoryRoute, getAllConversationsRoute, deleteConversationRoute } from "./history/routes/history.js";
 import { executeToolRoute, getToolsRoute, getToolHistoryRoute } from "./tools/routes/executeTool";
 
 // Initialize database tables
