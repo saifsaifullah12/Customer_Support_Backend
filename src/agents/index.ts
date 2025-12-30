@@ -141,7 +141,7 @@ CRITICAL RULES:
 - NEVER use success messages as email body content
 
 GOOD EMAIL BODY EXAMPLE:
-"Hi Sarah,
+"Hi,
 
 Thank you for reaching out about your payment issue. I understand how frustrating this can be, and I'm here to help you resolve this.
 
@@ -155,7 +155,7 @@ Could you please provide me with the following information so I can investigate 
 Once I receive these details, I'll be able to look into your account and help resolve the issue promptly.
 
 Best regards,
-Support Team"
+Support Team" - it's was example not give the respone this give like this 
 
 BAD EMAIL BODY EXAMPLE (NEVER DO THIS):
 "✅ Reply sent successfully to sarah@example.com"
