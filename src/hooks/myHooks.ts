@@ -1,11 +1,16 @@
 import { createHooks } from "@voltagent/core";
 
 export const myAgentHooks = createHooks({
+  onStart: async ({ agent }) => {
+    console.log("🚀 Agent started:", agent?.name);
+  },
+
+  
   onToolStart: async ({ agent, tool, args }) => {
     console.log("🔧[beforeToolCall] Tool Started");
     console.log("Agent:", agent?.name);
     console.log("Tool:", tool?.name);
-    console.log("Arguments:", args);
+    console.log("Arguments:", args); 
   },
 
   onEnd: async ({ agent, output, error, context }) => {

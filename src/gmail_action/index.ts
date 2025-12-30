@@ -1,4 +1,3 @@
-// src/gmail_action/index.ts
 import { createTool, VoltOpsClient } from "@voltagent/core";
 import { z } from "zod";
 
