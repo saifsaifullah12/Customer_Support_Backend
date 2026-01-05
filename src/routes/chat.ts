@@ -12,10 +12,10 @@ function redactPII(text = "") {
 // Enhanced email detection
 function detectEmailIntent(text: string): { isEmail: boolean; type: 'send' | 'reply' | null; data?: any } {
   if (!text) return { isEmail: false, type: null };
-  
+
   try {
     const parsed = JSON.parse(text);
-    
+
     if (parsed.to && parsed.subject && (parsed.body || parsed.bodyText)) {
       return {
         isEmail: true,
@@ -27,7 +27,7 @@ function detectEmailIntent(text: string): { isEmail: boolean; type: 'send' | 're
         }
       };
     }
-    
+
     if (parsed.thread_id && (parsed.body || parsed.bodyText)) {
       return {
         isEmail: true,
@@ -45,38 +45,38 @@ function detectEmailIntent(text: string): { isEmail: boolean; type: 'send' | 're
       'send email', 'send an email', 'compose email',
       'write email', 'email to', 'send message to'
     ];
-    
+
     if (emailKeywords.some(kw => lowerText.includes(kw))) {
       return { isEmail: true, type: 'send' };
     }
   }
-  
+
   return { isEmail: false, type: null };
 }
 
 function detectInboxIntent(text: string): boolean {
   if (!text) return false;
-  
+
   const lowerText = text.toLowerCase();
   const inboxKeywords = [
     'get inbox', 'show inbox', 'fetch inbox', 'my emails',
     'check inbox', 'inbox emails', 'show my emails',
     'get my emails', 'fetch emails', 'list emails'
   ];
-  
+
   return inboxKeywords.some(kw => lowerText.includes(kw));
 }
 
-function detectReplyRequest(text: string): { 
-  isReply: boolean; 
+function detectReplyRequest(text: string): {
+  isReply: boolean;
   threadId?: string;
   originalEmail?: any;
 } {
   if (!text) return { isReply: false };
-  
+
   try {
     const parsed = JSON.parse(text);
-    
+
     if ((parsed.action === 'reply' || parsed.type === 'reply' || parsed.action === 'ai-reply') && parsed.thread_id && parsed.originalEmail) {
       return {
         isReply: true,
@@ -88,8 +88,8 @@ function detectReplyRequest(text: string): {
         },
       };
     }
-  } catch {}
-  
+  } catch { }
+
   return { isReply: false };
 }
 
@@ -101,39 +101,39 @@ const MAX_REPLIES_PER_THREAD = 1;
 function canSendReply(threadId: string, conversationId: string): boolean {
   const replyInfo = recentReplies.get(threadId);
   if (!replyInfo) return true;
-  
+
   const timeSince = Date.now() - replyInfo.lastTime;
-  
+
   // If same conversation, definitely block
   if (replyInfo.conversationId === conversationId) {
     console.warn("⚠️ Same conversation trying to reply again:", threadId);
     return false;
   }
-  
+
   // If cooldown period has passed, reset
   if (timeSince > REPLY_COOLDOWN_MS) {
     recentReplies.delete(threadId);
     return true;
   }
-  
+
   // Check if we've exceeded max replies
   return replyInfo.count < MAX_REPLIES_PER_THREAD;
 }
 
 function markReplySent(threadId: string, conversationId: string): void {
   const existing = recentReplies.get(threadId);
-  
+
   if (existing) {
     existing.count++;
     existing.lastTime = Date.now();
   } else {
-    recentReplies.set(threadId, { 
-      count: 1, 
+    recentReplies.set(threadId, {
+      count: 1,
       lastTime: Date.now(),
-      conversationId 
+      conversationId
     });
   }
-  
+
   // Cleanup old entries
   setTimeout(() => {
     const info = recentReplies.get(threadId);
@@ -147,31 +147,31 @@ export async function chatRoute(c: Context) {
   try {
     const body = await c.req.json();
     console.log("📨 Received message:", body);
-    
+
     const parsed = parseMessage(body);
     const issueType = classifyIssue(parsed.text || "");
-    
+
     const conversationId = body.conversationId || `conv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const userId = body.userId || "user-123";
-    
+
     // Save conversation if new
     const existingConversation = await query(
       `SELECT id FROM conversations WHERE id = $1`,
       [conversationId]
     );
-    
+
     if (existingConversation.length === 0) {
-      const title = parsed.text 
+      const title = parsed.text
         ? (parsed.text.length > 50 ? parsed.text.substring(0, 50) + '...' : parsed.text)
         : 'New Conversation';
-      
+
       await query(
         `INSERT INTO conversations (id, title, user_id, created_at) 
          VALUES ($1, $2, $3, NOW())`,
         [conversationId, title, userId]
       );
     }
-    
+
     // Save user message
     if (parsed.text) {
       const redactedText = redactPII(parsed.text);
@@ -195,15 +195,15 @@ export async function chatRoute(c: Context) {
     if (replyRequest.isReply && replyRequest.threadId) {
       if (!canSendReply(replyRequest.threadId, conversationId)) {
         console.warn("⚠️ Duplicate reply blocked for thread:", replyRequest.threadId);
-        
+
         const blockMessage = "⚠️ A reply was already sent to this email thread recently. Please wait before sending another reply.";
-        
+
         await query(
           `INSERT INTO conversation_messages (conversation_id, role, content, created_at)
            VALUES ($1, $2, $3, NOW())`,
           [conversationId, 'assistant', blockMessage]
         );
-        
+
         return c.json({
           ok: true,
           text: blockMessage,
@@ -212,7 +212,7 @@ export async function chatRoute(c: Context) {
           duplicate: true,
         });
       }
-      
+
       // Mark immediately to prevent race conditions
       markReplySent(replyRequest.threadId, conversationId);
       console.log("✅ Reply marked as pending for thread:", replyRequest.threadId);
@@ -222,7 +222,7 @@ export async function chatRoute(c: Context) {
 
     if (parsed.text) {
       const redactedText = redactPII(parsed.text);
-      
+
       if (inboxIntent) {
         messageContent.push({
           type: "text",
@@ -234,13 +234,13 @@ Execute the tool NOW without any explanation or confirmation.`,
       // CRITICAL FIX: Better prompt for AI-powered reply
       else if (replyRequest.isReply && replyRequest.originalEmail) {
         const originalEmail = replyRequest.originalEmail;
-        const senderEmail = originalEmail.from.includes('<') 
+        const senderEmail = originalEmail.from.includes('<')
           ? originalEmail.from.match(/<(.+)>/)?.[1] || originalEmail.from
           : originalEmail.from;
         const senderName = originalEmail.from.includes('<')
           ? originalEmail.from.split('<')[0].trim()
           : senderEmail.split('@')[0];
-        
+
         messageContent.push({
           type: "text",
           text: `AI EMAIL REPLY TASK - Generate professional email reply and send it.
@@ -356,23 +356,23 @@ Execute the tool NOW without any explanation or confirmation.`,
       emailIntent,
       inboxIntent,
       replyRequest,
-      messagePreview: messages[0].content[0].text?.substring(0, 200)
+      messagePreview: messages[0]?.content?.[0]?.text?.substring(0, 200) || "No preview available"
     });
 
     const result = await mainSupportAgent.generateText(messages, options);
-    
+
     clearTimeout(timeoutId);
 
-    let responseText = typeof result?.text === "string" 
-      ? result.text 
+    let responseText = typeof result?.text === "string"
+      ? result.text
       : String(result?.text || "");
 
     // CLEAN UP RESPONSE FOR AI REPLIES
     if (replyRequest.isReply && replyRequest.originalEmail) {
-      const senderEmail = replyRequest.originalEmail.from.includes('<') 
+      const senderEmail = replyRequest.originalEmail.from.includes('<')
         ? replyRequest.originalEmail.from.match(/<(.+)>/)?.[1] || replyRequest.originalEmail.from
         : replyRequest.originalEmail.from;
-      
+
       // Force clean success message
       responseText = `✅ Reply sent successfully to ${senderEmail}`;
     }
@@ -386,10 +386,10 @@ Execute the tool NOW without any explanation or confirmation.`,
 
     // Update conversation title if first message
     if (existingConversation.length === 0 && parsed.text) {
-      const title = parsed.text.length > 50 
+      const title = parsed.text.length > 50
         ? parsed.text.substring(0, 50) + '...'
         : parsed.text;
-      
+
       await query(
         `UPDATE conversations SET title = $1 WHERE id = $2`,
         [title, conversationId]
@@ -418,8 +418,8 @@ Execute the tool NOW without any explanation or confirmation.`,
   } catch (err: any) {
     const message = String(err?.message || "");
 
-    if (message.toLowerCase().includes("guardrail") || 
-        message.toLowerCase().includes("blocked")) {
+    if (message.toLowerCase().includes("guardrail") ||
+      message.toLowerCase().includes("blocked")) {
       return c.json({
         ok: true,
         blocked: true,
@@ -429,17 +429,17 @@ Execute the tool NOW without any explanation or confirmation.`,
 
     if (err.name === 'AbortError') {
       console.error("⏱️ Request timeout");
-      return c.json({ 
-        ok: false, 
-        error: "Request timeout - operation took too long" 
+      return c.json({
+        ok: false,
+        error: "Request timeout - operation took too long"
       }, 408);
     }
 
     console.error("❌ Chat Route Error:", err);
-    return c.json({ 
-      ok: false, 
+    return c.json({
+      ok: false,
       error: "Internal Server Error",
-      details: message 
+      details: message
     }, 500);
   }
 }

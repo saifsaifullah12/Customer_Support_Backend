@@ -6,6 +6,7 @@ import { cors } from "hono/cors";
 import { mailAgent, mainSupportAgent } from "./agents/index.js";
 import { chatRoute } from "./routes/chat.js";
 import { uploadRoute } from "./routes/upload.js";
+import { loginRoute, signupRoute } from "./routes/auth.js";
 import honoServer from "@voltagent/server-hono";
 import { memory } from "./memory/index.js";
 import {
@@ -21,15 +22,40 @@ import {
 import { sendMailRoute } from "./gmail_action/routes/sendMail";
 import { getConversationHistoryRoute, getAllConversationsRoute, deleteConversationRoute } from "./history/routes/history.js";
 import { executeToolRoute, getToolsRoute, getToolHistoryRoute } from "./tools/routes/executeTool";
-import { testZapierConnection } from "./mcp/mcpconnection";
-import { zapierSendEmailTool } from "./mcp/zapierSendEmailTool";
-import { zapierReplyEmailTool } from "./mcp/zapierReplyEmailTool";
-import { zapierFetchInboxTool } from "./mcp/zapierFetchInboxTool";
-import { getZapierClient } from "./mcp/mcpconnection";
+import { testMailMCPConnection, getMailMCPClient } from "./mcp/mcpconnection";
+import { sendMailTool } from "./mcp/sendMailTool";
+import { readInboxTool } from "./mcp/readInboxTool";
 import { getInboxRoute } from "./routess/inbox.js";
+import {
+  uploadDocumentRoute,
+  searchDocumentsRoute,
+  getAllDocumentsRoute,
+  getDocumentRoute,
+  deleteDocumentRoute,
+  getStatsRoute,
+  batchUploadRoute,
+} from "./rag/routes/ragRoutes";
 
 // Initialize database tables
-// initDatabase().catch(console.error);
+async function initDatabase() {
+  try {
+    // Create users table
+    await query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log("✅ Database initialized successfully");
+  } catch (error) {
+    console.error("❌ Database initialization failed:", error);
+  }
+}
+
+initDatabase().catch(console.error);
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing database pool...');
@@ -46,7 +72,7 @@ process.on('SIGINT', async () => {
 const app = new Hono();
 
 app.use("/*", cors({
-  origin: ["http://localhost:3000", "http://localhost:3001","https://customersupportfrontend.vercel.app"],
+  origin: ["http://localhost:3000", "http://localhost:3001", "https://customersupportfrontend.vercel.app"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization"],
   exposeHeaders: ["Content-Length"],
@@ -58,10 +84,14 @@ app.use("/*", cors({
 app.post("/chat", chatRoute);
 app.post("/upload", uploadRoute);
 
+// Auth routes
+app.post("/login", loginRoute);
+app.post("/signup", signupRoute);
+
 // Health check
 app.get("/health", (c) => {
-  return c.json({ 
-    status: "ok", 
+  return c.json({
+    status: "ok",
     message: "Server is running",
     timestamp: new Date().toISOString(),
     services: {
@@ -108,6 +138,8 @@ app.get("/email/config", (c) => {
       hasPublicKey: !!process.env.VOLTAGENT_PUBLIC_KEY,
       hasSecretKey: !!process.env.VOLTAGENT_SECRET_KEY,
       hasCredentialId: !!process.env.GMAIL_CREDENTIAL_ID,
+      hasAuth0Token: !!process.env.Access_Token,
+      hasMCPServer: !!process.env.MAIL_MCP_SERVER_PATH,
       nodeEnv: process.env.NODE_ENV,
       serverTime: new Date().toISOString()
     }
@@ -137,82 +169,31 @@ app.get("/email/templates", (c) => {
   });
 });
 
-// NEW: AI-Powered Email Reply Endpoint
-// Add this to your index.ts server file
-
-// NEW: AI-Powered Email Reply Endpoint - IMPROVED VERSION
-// Improved AI-Powered Email Reply Endpoint
-app.post("/email/reply-with-ai", async (c) => {
+// AI-Powered Email Send Endpoint (using your MCP server)
+app.post("/email/send-with-ai", async (c) => {
   try {
     const body = await c.req.json();
-    const { thread_id, originalEmail, userId } = body;
+    const { to, subject, context, userId } = body;
 
-    if (!thread_id) {
+    if (!to || !subject) {
       return c.json({
         ok: false,
-        error: "Missing required field: thread_id"
+        error: "Missing required fields: to, subject"
       }, 400);
     }
 
-    if (!originalEmail || !originalEmail.from || !originalEmail.subject || !originalEmail.body) {
-      return c.json({
-        ok: false,
-        error: "Missing required fields in originalEmail: from, subject, body"
-      }, 400);
-    }
+    console.log("🤖 AI Email Send Request:", { to, subject });
 
-    // Check for duplicate reply in database
-    const recentReply = await query(
-      `SELECT id FROM conversation_messages 
-       WHERE content LIKE $1 
-       AND created_at > NOW() - INTERVAL '2 minutes'
-       LIMIT 1`,
-      [`%Reply sent successfully%${thread_id}%`]
-    );
+    const conversationId = `send-ai-${Date.now()}`;
 
-    if (recentReply.length > 0) {
-      console.warn("⚠️ Duplicate AI reply blocked for thread:", thread_id);
-      return c.json({
-        ok: false,
-        error: "A reply was already sent recently to this thread.",
-        duplicate: true
-      }, 429);
-    }
+    // Generate AI email content using mailAgent
+    const messageText = `Generate and send a professional email.
 
-    console.log("🤖 AI Reply Request:", { 
-      thread_id, 
-      from: originalEmail.from,
-      subject: originalEmail.subject 
-    });
+To: ${to}
+Subject: ${subject}
+Context: ${context || 'General inquiry'}
 
-    const conversationId = `reply-ai-${thread_id}-${Date.now()}`;
-    const senderEmail = originalEmail.from.includes('<') 
-      ? originalEmail.from.match(/<(.+)>/)?.[1] || originalEmail.from
-      : originalEmail.from;
-    const senderName = originalEmail.from.includes('<')
-      ? originalEmail.from.split('<')[0].trim()
-      : senderEmail.split('@')[0];
-
-    // Generate AI reply using mailAgent
-    const messageText = `CRITICAL: Generate and send reply ONCE ONLY.
-
-=== ORIGINAL EMAIL ===
-From: ${originalEmail.from}
-Subject: ${originalEmail.subject}
-Thread ID: ${thread_id}
-
-Body:
-${originalEmail.body}
-
-=== YOUR TASK ===
-
-Step 1: Write a professional reply email
-Step 2: Call gmail_reply_to_email ONCE with thread_id "${thread_id}"
-Step 3: Respond with: "✅ Reply sent successfully to ${senderEmail}"
-
-Generate reply addressing their concerns professionally. Use proper greeting ("Hi ${senderName},"), acknowledge their issue, provide helpful info, and close professionally.
-
-Execute now.`;
+Write a complete professional email and send it immediately using send_mail tool.`;
 
     const messages: any = [
       {
@@ -221,73 +202,35 @@ Execute now.`;
       }
     ];
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
-
     const options = {
       userId: userId || "user-123",
       conversationId: conversationId,
-      signal: controller.signal,
       context: {
         appVersion: "1.0.2",
         platform: "web",
         plan: "pro",
         language: "en-IN",
-        aiReplyRequest: true,
       },
     };
 
-    console.log("🤖 Generating AI reply...");
-
     const result = await mailAgent.generateText(messages, options);
-    
-    clearTimeout(timeoutId);
 
-    let responseText = typeof result?.text === "string" 
-      ? result.text 
+    let responseText = typeof result?.text === "string"
+      ? result.text
       : String(result?.text || "");
-
-    // Clean response - ensure it's just the success message
-    if (!responseText.includes('✅ Reply sent successfully')) {
-      responseText = `✅ Reply sent successfully to ${senderEmail}`;
-    } else {
-      // Extract just the success message
-      const match = responseText.match(/✅ Reply sent successfully to .+/);
-      if (match) {
-        responseText = match[0];
-      }
-    }
-
-    // Save to database
-    await query(
-      `INSERT INTO conversation_messages (conversation_id, role, content, created_at)
-       VALUES ($1, $2, $3, NOW())`,
-      [conversationId, 'assistant', responseText]
-    );
-
-    console.log("✅ AI Reply sent successfully");
 
     return c.json({
       ok: true,
       message: responseText,
       conversationId,
-      thread_id,
-      aiReplySent: true,
+      sentTo: to,
     });
 
   } catch (error: any) {
-    if (error.name === 'AbortError') {
-      console.error("⏱️ Request timeout");
-      return c.json({ 
-        ok: false, 
-        error: "Request timeout - AI reply generation took too long" 
-      }, 408);
-    }
-
-    console.error("❌ AI Reply route error:", error);
+    console.error("❌ AI Send route error:", error);
     return c.json({
       ok: false,
-      error: "Failed to generate and send AI reply",
+      error: "Failed to generate and send email",
       details: error.message
     }, 500);
   }
@@ -298,15 +241,22 @@ app.get("/inbox", getInboxRoute);
 
 app.get("/inbox/refresh", async (c) => {
   try {
-    const result: any = await zapierFetchInboxTool.execute({
-      query: "",
-      maxResults: 20,
-    });
-    
+    const token = c.req.header('Authorization')?.replace('Bearer ', '') ||
+      process.env.Access_Token?.replace(/^["']|["']$/g, "").trim();
+
+    if (!token) {
+      return c.json({
+        ok: false,
+        error: "Auth0 token required"
+      }, 401);
+    }
+
+    const result: any = await readInboxTool.execute({ token });
+
     return c.json({
       ok: result.success,
       message: result.success ? "Inbox refreshed successfully" : "Failed to refresh inbox",
-      count: result.count || 0,
+      count: result.emailCount || 0,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
@@ -317,10 +267,10 @@ app.get("/inbox/refresh", async (c) => {
   }
 });
 
-// Test Zapier connection
-app.get("/test/zapier", async (c) => {
+// Test Mail MCP connection
+app.get("/test/mail-mcp", async (c) => {
   try {
-    const result = await testZapierConnection();
+    const result = await testMailMCPConnection();
     return c.json({
       ok: true,
       ...result,
@@ -349,8 +299,8 @@ app.post("/test/email/send", async (c) => {
 
     console.log("📧 Testing direct email send:", { to, subject });
 
-    const result: any = await zapierSendEmailTool.execute({
-      to: Array.isArray(to) ? to : [to],
+    const result: any = await sendMailTool.execute({
+      to,
       subject,
       body: bodyText,
     });
@@ -371,53 +321,23 @@ app.post("/test/email/send", async (c) => {
   }
 });
 
-// Test direct email reply (bypasses agent)
-app.post("/test/email/reply", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { thread_id, bodyText, to } = body;
-
-    if (!thread_id || !bodyText) {
-      return c.json({
-        ok: false,
-        error: "Missing required fields: thread_id, bodyText"
-      }, 400);
-    }
-
-    console.log("💬 Testing direct email reply:", { thread_id, to });
-
-    const result = await zapierReplyEmailTool.execute({
-      thread_id,
-      body: bodyText,
-      to,
-    });
-
-    return c.json({
-      ok: true,
-      message: "Email reply test completed",
-      result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error: any) {
-    console.error("❌ Email reply test failed:", error);
-    return c.json({
-      ok: false,
-      error: error.message,
-      details: error.toString()
-    }, 500);
-  }
-});
-
 // Test inbox fetch
 app.get("/test/inbox", async (c) => {
   try {
+    const token = c.req.query('token') ||
+      process.env.Access_Token?.replace(/^["']|["']$/g, "").trim();
+
+    if (!token) {
+      return c.json({
+        ok: false,
+        error: "Auth0 token required"
+      }, 401);
+    }
+
     console.log("📬 Testing inbox fetch...");
-    
-    const result = await zapierFetchInboxTool.execute({
-      query: "",
-      maxResults: 5,
-    });
-    
+
+    const result = await readInboxTool.execute({ token });
+
     return c.json({
       ok: true,
       message: "Inbox test completed",
@@ -434,14 +354,14 @@ app.get("/test/inbox", async (c) => {
   }
 });
 
-// View Zapier tool schemas
-app.get("/test/zapier/tools", async (c) => {
+// View Mail MCP tool schemas
+app.get("/test/mail-mcp/tools", async (c) => {
   try {
-    const client = await getZapierClient();
+    const client = await getMailMCPClient();
     const tools = await client.listTools();
-    
+
     // Get detailed schema for each tool
-    const detailedTools = tools.tools?.map(tool => ({
+    const detailedTools = tools.tools?.map((tool: any) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
@@ -461,11 +381,76 @@ app.get("/test/zapier/tools", async (c) => {
   }
 });
 
+console.log("\n📚 RAG (Knowledge Base) Endpoints:");
+
+app.post("/rag/upload", uploadDocumentRoute);
+console.log("  POST /rag/upload               - Upload and index document");
+
+app.post("/rag/search", searchDocumentsRoute);
+console.log("  POST /rag/search               - Search knowledge base");
+
+app.get("/rag/documents", getAllDocumentsRoute);
+console.log("  GET  /rag/documents            - Get all documents");
+
+app.get("/rag/documents/:id", getDocumentRoute);
+console.log("  GET  /rag/documents/:id        - Get document by ID");
+
+app.delete("/rag/documents/:id", deleteDocumentRoute);
+console.log("  DELETE /rag/documents/:id      - Delete document");
+
+app.get("/rag/stats", getStatsRoute);
+console.log("  GET  /rag/stats                - Get RAG statistics");
+
+app.post("/rag/batch-upload", batchUploadRoute);
+console.log("  POST /rag/batch-upload         - Batch upload text documents");
+
+// Test RAG endpoint
+app.get("/test/rag", async (c) => {
+  try {
+    const testQuery = c.req.query('query') || "payment process";
+    const { ragStorage } = await import("./rag/storage");
+
+    const results = await ragStorage.search(testQuery, 3);
+
+    return c.json({
+      ok: true,
+      message: "RAG test completed",
+      query: testQuery,
+      resultsCount: results.length,
+      results: results.map(r => ({
+        title: r.document.title,
+        similarity: r.similarity,
+        preview: r.chunk.chunkText.substring(0, 200) + '...',
+      })),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    return c.json({
+      ok: false,
+      error: error.message,
+      details: error.toString(),
+    }, 500);
+  }
+});
+console.log("  GET  /test/rag?query=text      - Test RAG search");
+
 // Serve the application
 serve({
   port: 4000,
   fetch: app.fetch,
 });
+
+
+console.log("  GET  /test/rag?query=text      - Test RAG search");
+
+// Update the console logs at the end
+console.log("\n🎯 NEW FEATURES:");
+console.log("   ✅ RAG (Retrieval-Augmented Generation)");
+console.log("   ✅ Semantic document search with pgvector");
+console.log("   ✅ Multi-format document processing (PDF, DOCX, TXT, etc.)");
+console.log("   ✅ Intelligent chunking and embedding");
+console.log("   ✅ Vector similarity search");
+console.log("   ✅ RAG-powered agent responses");
 
 console.log("🚀 Hono API running at http://localhost:4000");
 console.log("📡 CORS enabled for http://localhost:3000");
@@ -487,14 +472,13 @@ console.log("  DELETE /evals/logs/:id         - Delete evaluation log");
 console.log("  POST /send-email               - Send emails");
 console.log("  GET  /email/config             - Get email configuration");
 console.log("  GET  /email/templates          - Get email templates");
-console.log("  POST /email/reply-with-ai      - 🤖 AI-Powered Email Reply (NEW!)");
+console.log("  POST /email/send-with-ai       - 🤖 AI-Powered Email Send (NEW!)");
 console.log("  GET  /inbox                    - Get inbox emails");
 console.log("  GET  /inbox/refresh            - Refresh inbox");
-console.log("  GET  /test/zapier              - Test Zapier MCP connection");
+console.log("  GET  /test/mail-mcp            - Test Mail MCP connection");
 console.log("  POST /test/email/send          - Test direct email send");
-console.log("  POST /test/email/reply         - Test direct email reply");
 console.log("  GET  /test/inbox               - Test inbox fetch");
-console.log("  GET  /test/zapier/tools        - View Zapier tool schemas");
+console.log("  GET  /test/mail-mcp/tools      - View Mail MCP tool schemas");
 
 const logger = createPinoLogger({
   name: "my-agent-server",
@@ -511,6 +495,5 @@ new VoltAgent({
 
 console.log("\n⚡ VoltAgent running at http://localhost:4310");
 console.log("✅ System initialized successfully!");
-console.log("\n🎯 NEW FEATURE: AI-Powered Email Replies");
-console.log("   Use POST /email/reply-with-ai to generate intelligent replies");
-console.log("   The AI will analyze the email and generate a contextual response");
+console.log("\n🎯 FEATURE: AI-Powered Email with Custom MCP Server");
+console.log("   Your custom Mail MCP server is integrated and ready!");

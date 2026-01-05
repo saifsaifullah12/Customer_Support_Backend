@@ -2,8 +2,10 @@ export function parseMessage(input: any) {
   const result = {
     text: "",
     imageBase64: null as string | null,
+    documentText: null as string | null,
     hasImage: false,
     hasText: false,
+    hasDocument: false,
   };
 
   if (typeof input === "string") {
@@ -21,6 +23,11 @@ export function parseMessage(input: any) {
     if (input.imageBase64) {
       result.imageBase64 = input.imageBase64;
       result.hasImage = true;
+    }
+
+    if (input.documentText) {
+      result.documentText = input.documentText;
+      result.hasDocument = true;
     }
 
     if (input.videoBase64) {

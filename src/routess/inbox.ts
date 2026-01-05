@@ -1,28 +1,40 @@
 import type { Context } from "hono";
-import { zapierFetchInboxTool } from "../mcp/zapierFetchInboxTool";
+import { readInboxTool } from "../mcp/readInboxTool";
 
 export async function getInboxRoute(c: Context) {
   try {
-    const query = c.req.query('query') || "";
-    const maxResults = parseInt(c.req.query('maxResults') || "20");
+    // Get Auth0 token from request headers or query
+    const token = c.req.header('Authorization')?.replace('Bearer ', '') || 
+                  c.req.query('token') || 
+                  process.env.Access_Token?.replace(/^["']|["']$/g, "").trim();
 
-    console.log("📬 Fetching inbox emails:", { query, maxResults });
+    if (!token) {
+      return c.json({
+        ok: false,
+        error: "Auth0 token is required. Please provide token in Authorization header or query parameter.",
+      }, 401);
+    }
 
-    const result: any = await zapierFetchInboxTool.execute({
-      query,
-      maxResults,
+    // Get maxEmails from query parameter (default: 50)
+    const maxEmails = parseInt(c.req.query('maxEmails') || '50');
+
+    console.log(`📬 Fetching last ${maxEmails} emails via Mail MCP`);
+
+    const result: any = await readInboxTool.execute({
+      token,
+      maxEmails,
     });
 
     if (result.success) {
-      // Parse and format emails
-      const emails = parseGmailResponse(result.emails);
+      // Parse the formatted inbox response
+      const emails = parseMailMCPResponse(result.result);
 
       console.log("✅ Parsed emails:", emails.length);
 
       return c.json({
         ok: true,
         emails: emails,
-        count: emails.length,
+        count: result.emailCount || emails.length,
         timestamp: new Date().toISOString(),
       });
     } else {
@@ -42,8 +54,8 @@ export async function getInboxRoute(c: Context) {
   }
 }
 
-// Helper function to parse Gmail API response from Zapier MCP
-function parseGmailResponse(response: any): Array<{
+// Helper function to parse Mail MCP response
+function parseMailMCPResponse(response: string): Array<{
   id: string;
   threadId: string;
   from: string;
@@ -54,76 +66,82 @@ function parseGmailResponse(response: any): Array<{
   body?: string;
 }> {
   try {
-    console.log("🔍 Raw response type:", typeof response);
+    console.log("🔍 Parsing Mail MCP response");
+    console.log("📝 Response length:", response.length);
     
-    let emailData: any[] = [];
+    const emails: any[] = [];
     
-    // Case 1: Response is an array with content objects
-    if (Array.isArray(response)) {
-      // Check if it's an array of content objects
-      if (response[0]?.type === 'text' && response[0]?.text) {
-        try {
-          const parsedText = JSON.parse(response[0].text);
-          if (parsedText.results && Array.isArray(parsedText.results)) {
-            emailData = parsedText.results;
-          }
-        } catch (e) {
-          console.error("Failed to parse text content:", e);
-        }
-      } else {
-        emailData = response;
-      }
-    }
-    // Case 2: Response has content property
-    else if (response?.content && Array.isArray(response.content)) {
-      const contentItem = response.content[0];
-      if (contentItem?.type === 'text' && contentItem?.text) {
-        try {
-          const parsedText = JSON.parse(contentItem.text);
-          if (parsedText.results && Array.isArray(parsedText.results)) {
-            emailData = parsedText.results;
-          }
-        } catch (e) {
-          console.error("Failed to parse content text:", e);
-        }
-      }
-    }
-    // Case 3: Direct string response
-    else if (typeof response === 'string') {
-      try {
-        const parsed = JSON.parse(response);
-        if (parsed.results && Array.isArray(parsed.results)) {
-          emailData = parsed.results;
-        }
-      } catch (e) {
-        console.error("Failed to parse string response:", e);
-      }
-    }
-    // Case 4: Already has results property
-    else if (response?.results && Array.isArray(response.results)) {
-      emailData = response.results;
-    }
-
-    console.log("📧 Parsed email count:", emailData.length);
-
-    // Transform to frontend format
-    return emailData.map((email: any) => {
-      const fromEmail = email.from?.email || email.from || "unknown@example.com";
-      const fromName = email.from?.name || fromEmail.split('@')[0];
+    // Split by numbered entries (e.g., "1. 📧", "2. 📧", etc.)
+    const lines = response.split('\n');
+    let currentEmail: any = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
       
-      return {
-        id: email.id || email.message_id || Date.now().toString(),
-        threadId: email.thread_id || email.threadId || email.id || "",
-        from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
-        subject: email.subject || "(No Subject)",
-        snippet: email.body_plain?.substring(0, 150) || email.snippet || "",
-        date: email.date || new Date().toISOString(),
-        unread: email.labels?.includes('UNREAD') || false,
-        body: email.body_plain || email.body || email.snippet || "",
-      };
-    });
+      // Check if this is the start of a new email entry
+      if (/^\d+\.\s*📧/.test(line)) {
+        // Save previous email if exists
+        if (currentEmail && currentEmail.from && currentEmail.subject) {
+          emails.push(currentEmail);
+        }
+        
+        // Start new email
+        currentEmail = {
+          id: `email-${Date.now()}-${Math.random()}`,
+          threadId: `thread-${Date.now()}-${Math.random()}`,
+          from: '',
+          subject: '',
+          snippet: '',
+          date: new Date().toISOString(),
+          unread: false,
+          body: '',
+        };
+        
+        // Extract "From:" from the same line if present
+        const fromMatch = line.match(/From:\s*(.+)/i);
+        if (fromMatch) {
+          currentEmail.from = fromMatch[1].trim();
+        }
+      }
+      // Extract fields for current email
+      else if (currentEmail) {
+        if (line.startsWith('From:')) {
+          currentEmail.from = line.replace(/^From:\s*/i, '').trim();
+        }
+        else if (line.startsWith('Subject:')) {
+          currentEmail.subject = line.replace(/^Subject:\s*/i, '').trim();
+        }
+        else if (line.startsWith('Date:')) {
+          const dateStr = line.replace(/^Date:\s*/i, '').trim();
+          currentEmail.date = dateStr;
+        }
+        else if (line.startsWith('Preview:')) {
+          const preview = line.replace(/^Preview:\s*/i, '').trim();
+          currentEmail.snippet = preview.replace(/\.\.\.$/, '');
+          currentEmail.body = currentEmail.snippet;
+        }
+      }
+    }
+    
+    // Don't forget to add the last email
+    if (currentEmail && currentEmail.from && currentEmail.subject) {
+      emails.push(currentEmail);
+    }
+    
+    console.log("📧 Parsed email count:", emails.length);
+    
+    if (emails.length > 0) {
+      console.log("📧 Sample email:", JSON.stringify(emails[0], null, 2));
+    } else {
+      console.log("⚠️ No emails were parsed. Check response format:");
+      console.log("First 500 chars:", response.substring(0, 500));
+    }
+    
+    return emails;
+    
   } catch (error) {
     console.error("❌ Failed to parse email response:", error);
+    console.error("Response:", response.substring(0, 1000));
     return [];
   }
 }

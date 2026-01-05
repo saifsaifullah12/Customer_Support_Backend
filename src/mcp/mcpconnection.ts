@@ -1,18 +1,18 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 let client: Client | null = null;
 let isConnecting = false;
 let connectionAttempts = 0;
 const MAX_ATTEMPTS = 3;
 
-export async function getZapierClient(): Promise<Client> {
+export async function getMailMCPClient(): Promise<Client> {
   // Return existing client if connected and healthy
   if (client) {
     try {
       // Quick health check - list tools to verify connection
       await client.listTools();
-      console.log("✅ Using existing Zapier MCP connection");
+      console.log("✅ Using existing Mail MCP connection");
       return client;
     } catch (error) {
       console.warn("⚠️ Existing connection is stale, reconnecting...");
@@ -24,33 +24,30 @@ export async function getZapierClient(): Promise<Client> {
   if (isConnecting) {
     console.log("⏳ Connection in progress, waiting...");
     await new Promise(resolve => setTimeout(resolve, 500));
-    return getZapierClient();
+    return getMailMCPClient();
   }
 
   isConnecting = true;
 
   try {
-    const serverUrl = process.env.ZAPIER_MCP_URL;
+    const serverPath = process.env.MAIL_MCP_SERVER_PATH || "index.js";
     
-    if (!serverUrl) {
-      throw new Error("❌ ZAPIER_MCP_URL environment variable is not set");
-    }
-
-    console.log(`🔌 Connecting to Zapier MCP (attempt ${connectionAttempts + 1}/${MAX_ATTEMPTS}):`, serverUrl);
+    console.log(`🔌 Connecting to Mail MCP (attempt ${connectionAttempts + 1}/${MAX_ATTEMPTS}):`, serverPath);
 
     client = new Client(
       { 
-        name: "voltagent-zapier-client", 
+        name: "voltagent-mail-client", 
         version: "1.0.0" 
       },
       { 
-        capabilities: {
-          // Enable all available capabilities
-        } 
+        capabilities: {} 
       }
     );
 
-    const transport = new StreamableHTTPClientTransport(new URL(serverUrl));
+    const transport = new StdioClientTransport({
+      command: "node",
+      args: [serverPath],
+    });
     
     await client.connect(transport);
     
@@ -58,11 +55,11 @@ export async function getZapierClient(): Promise<Client> {
     const tools = await client.listTools();
     const toolNames = tools.tools?.map(t => t.name).join(", ") || "none";
     
-    console.log("✅ Successfully connected to Zapier MCP");
+    console.log("✅ Successfully connected to Mail MCP");
     console.log("📋 Available tools:", toolNames);
 
     // Verify expected tools exist
-    const expectedTools = ["gmail_send_email", "gmail_reply_to_email"];
+    const expectedTools = ["sendMail", "readInbox"];
     const availableToolNames = tools.tools?.map(t => t.name) || [];
     const missingTools = expectedTools.filter(t => !availableToolNames.includes(t));
     
@@ -76,7 +73,7 @@ export async function getZapierClient(): Promise<Client> {
     client = null;
     connectionAttempts++;
     
-    console.error(`❌ Failed to connect to Zapier MCP (attempt ${connectionAttempts}/${MAX_ATTEMPTS}):`, error.message);
+    console.error(`❌ Failed to connect to Mail MCP (attempt ${connectionAttempts}/${MAX_ATTEMPTS}):`, error.message);
     
     // Retry with exponential backoff
     if (connectionAttempts < MAX_ATTEMPTS) {
@@ -84,23 +81,23 @@ export async function getZapierClient(): Promise<Client> {
       console.log(`⏳ Retrying in ${backoffMs}ms...`);
       await new Promise(resolve => setTimeout(resolve, backoffMs));
       isConnecting = false;
-      return getZapierClient();
+      return getMailMCPClient();
     }
     
     connectionAttempts = 0; // Reset for next attempt
-    throw new Error(`Failed to connect to Zapier MCP after ${MAX_ATTEMPTS} attempts: ${error.message}`);
+    throw new Error(`Failed to connect to Mail MCP after ${MAX_ATTEMPTS} attempts: ${error.message}`);
   } finally {
     isConnecting = false;
   }
 }
 
 // Disconnect function for cleanup
-export async function disconnectZapierClient() {
+export async function disconnectMailMCPClient() {
   if (client) {
     try {
       await client.close();
       client = null;
-      console.log("🔌 Disconnected from Zapier MCP");
+      console.log("🔌 Disconnected from Mail MCP");
     } catch (error) {
       console.error("Error disconnecting:", error);
     }
@@ -108,13 +105,13 @@ export async function disconnectZapierClient() {
 }
 
 // Test connection function
-export async function testZapierConnection(): Promise<{ 
+export async function testMailMCPConnection(): Promise<{ 
   connected: boolean; 
   tools?: string[]; 
   error?: string 
 }> {
   try {
-    const client = await getZapierClient();
+    const client = await getMailMCPClient();
     const tools = await client.listTools();
     return {
       connected: true,
